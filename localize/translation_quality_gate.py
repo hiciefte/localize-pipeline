@@ -137,7 +137,8 @@ def is_expected_source_identical(
     normalized = normalize_value(value)
     if not normalized:
         return True
-    if _ENUM_LIKE_KEY.match(key):
+    # Key naming alone cannot exempt a full sentence from translation.
+    if _ENUM_LIKE_KEY.match(key) and not _is_prose(normalized):
         return True
     glossary = {term.strip().casefold() for term in brand_glossary if str(term).strip()}
     if normalized.casefold() in glossary:
