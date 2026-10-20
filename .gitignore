@@ -65,3 +65,6 @@ docker/docker-compose.override.*.yaml
 /docs/customer-development-action-plan.md
 /docs/customer-discovery-targets.md
 /docs/*-dossier.md
+
+# Persistent manual workflow state, reports and local credentials
+.localize/

@@ -80,13 +80,26 @@ localize init \
   --localization-profile json:locale_directory
 ```
 
-Then run a real translation by setting `dry_run: false` in `config.yaml` and
-providing credentials:
+For a complete local run from this checkout, set `dry_run: false`, provide
+credentials, and select a config file or profile:
 
 ```bash
-localize validate --config config.yaml
-localize run --config config.yaml
+./run-local-translation.sh config.yaml --check
+./run-local-translation.sh config.yaml
 ```
+
+`run-local-translation.sh` and the server's `update-translations.sh` share
+`localize.workflow`: repository/source preparation, bounded sample validation,
+translation and holistic review, final semantic review, and the deterministic
+quality gate. Local runs leave a reviewed patch without publishing. Add
+`--publish` to create signed commits and PRs, or use `--publish-run` with the
+saved run report to publish an already checked candidate without regenerating
+translations. Any failed final check blocks publication.
+
+A custom config can select an existing clean checkout with `--repo /path/to/repo`.
+See [the local guide](docs/how-to-run-locally.md) for setup, state and retry options.
+The lower-level `localize run --config config.yaml` command remains available
+for embedding the translation engine; it does not run the complete workflow.
 
 Set `OPENAI_API_KEY` for OpenAI-backed runs, or set `api_base_url` in
 `config.yaml` for a local/OpenAI-compatible endpoint. See
@@ -312,6 +325,13 @@ Use these packages for reusable code:
 - `localize.providers`: AISuite/OpenAI-compatible provider factories and
   capabilities.
 
+These packages are public import facades: their `__init__.py` files re-export
+implementations that remain in top-level modules. `core` points to `pipeline_core.py`
+and `connectors.py`; `formats` points to the `localization_*` modules; `providers`
+points to `model_provider.py`. JSON parsing/serialization lives in
+`localization_adapters.py` and is exported as `localize.formats.JSON_ADAPTER`.
+The sparse package directories do not indicate missing implementations.
+
 Avoid importing implementation modules directly unless you are contributing to
 this repository.
 
@@ -388,8 +408,14 @@ docker compose --env-file docker/.env -f docker/docker-compose.yml run -T --rm t
 ```
 
 Docker mounts `profiles/${TRANSLATOR_PROFILE:-bisq}/config.yaml` and
-`glossary.json` into the container. Keep deploy keys, GPG keys, and tokens in
-`secrets/` and `docker/.env`; never commit them.
+`glossary.json` into the container. Its `update-translations.sh` entry point runs
+the same workflow as the local launcher, with publishing enabled by default.
+Pass `--no-publish` to leave a checked candidate for manual review. Docker adds
+runtime credentials, ownership setup and privilege dropping; it does not add a
+separate translation or quality-check implementation.
+
+Keep deploy keys, GPG keys, and tokens in `secrets/` and `docker/.env`; never
+commit them.
 
 Server guide: [docs/new-project-deployment.md](docs/new-project-deployment.md).
 
@@ -406,16 +432,16 @@ Server guide: [docs/new-project-deployment.md](docs/new-project-deployment.md).
   `suffix`, `locale_directory`, or `locale_filename`.
 - **`Permission denied (publickey)` on push:** the deploy key is missing or does
   not have write access to the fork repository.
-- **Skipped translation inputs:** files explicitly skipped by validation or
-  processing are excluded before PR batching and semantic review. The publisher
-  preserves their imported contents and validation summary under
-  `logs/skipped-inputs-*/`. Other valid files can still be published, but the run
-  exits unsuccessfully, retains the git-source baseline, and withholds its
-  success heartbeat for that run. Fix the reported input
-  problem and rerun; the pipeline does not restore old translations automatically.
-- **Quality gate failed:** inspect the PR report. The pipeline reports skipped
-  files, placeholder errors, semantic findings, and suspicious source-identical
-  values.
+- **Skipped translation inputs:** the shared local/server workflow retains
+  diagnostics and candidate files, exits unsuccessfully, and withholds
+  publication and source-baseline advancement. Resolve the reported input
+  problem before retrying; accepted outputs and request counts remain available.
+- **Quality gate failed:** inspect the run's quality report for skipped files,
+  placeholder errors, semantic findings, and suspicious source-identical values.
+  A failed report cannot be published with `--publish-run`.
+- **Pending local changes:** review or preserve the existing candidate before
+  starting another run. The shared workflow does not discard dirty files or
+  unmerged local commits to prepare a checkout.
 - **Generated PR title or counts look surprising:** inspect the "Translation run
   summary" section. It separates output values changed from candidate keys,
   model calls, translation-memory reuse, and source-identical keys skipped

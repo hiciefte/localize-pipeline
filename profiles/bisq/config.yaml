@@ -1,3 +1,8 @@
+workflow:
+  id: bisq
+  repository_url: https://github.com/bisq-network/bisq2.git
+  upstream_repository: bisq-network/bisq2
+  default_branch: main
 target_project_root: '/target_repo'
 run_safeguards:
   state_path: "/app/logs/run_safeguards.sqlite3"

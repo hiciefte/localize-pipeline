@@ -1,3 +1,9 @@
+workflow:
+  id: bisq1
+  repository_url: https://github.com/bisq-network/bisq.git
+  upstream_repository: bisq-network/bisq
+  default_branch: master
+  source_baseline: 8e19e4b74f73a32e3426ca55c674e46c4cb4f9af
 # The manual runner resolves paths into its own workspace.
 target_project_root: /target_repo
 run_safeguards:

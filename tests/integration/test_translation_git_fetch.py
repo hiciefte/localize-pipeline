@@ -1,13 +1,11 @@
 """Exercise the production translation fetch commands against real Git remotes."""
 
-import re
-from pathlib import Path
 import subprocess
 
 import pytest
 
 
-PROJECT_ROOT = Path(__file__).resolve().parents[2]
+from localize.workflow import prepare_checkout
 
 
 def _run(command, *, cwd, check=True):
@@ -15,16 +13,6 @@ def _run(command, *, cwd, check=True):
         command, cwd=cwd, text=True, capture_output=True, check=check
     )
 
-
-def _fetch_commands():
-    commands = []
-    for path in ("docker/docker-entrypoint.sh", "update-translations.sh"):
-        script = (PROJECT_ROOT / path).read_text(encoding="utf-8")
-        commands.extend(
-            line.removesuffix(" \\")
-            for line in re.findall(r"^\s*(git fetch[^\n]+)", script, re.MULTILINE)
-        )
-    return commands
 
 
 @pytest.fixture
@@ -52,39 +40,24 @@ def retagged_remote(tmp_path):
     return target, original, latest
 
 
-@pytest.mark.parametrize("fetch_command", _fetch_commands())
-def test_translation_fetch_refreshes_branch_despite_retagged_release(
-    retagged_remote, fetch_command
-):
+def test_translation_fetch_refreshes_branch_despite_retagged_release(retagged_remote, monkeypatch):
     target, original, latest = retagged_remote
-    result = _run(
-        [
-            "bash", "-c",
-            'set -euo pipefail; REMOTE=origin; DEFAULT_BRANCH=main; '
-            + fetch_command,
-        ],
-        cwd=target,
-        check=False,
-    )
-
-    assert result.returncode == 0, result.stderr
+    for name in ("UPSTREAM_REPO_NAME", "TARGET_BRANCH_FOR_PR", "FORK_REPO_URL"):
+        monkeypatch.delenv(name, raising=False)
+    head, branch = prepare_checkout(target, {"default_branch": "main"})
+    assert head == latest
+    assert branch == "main"
     assert _run(["git", "rev-parse", "origin/main"], cwd=target).stdout.strip() == latest
+    assert _run(["git", "rev-parse", "HEAD"], cwd=target).stdout.strip() == latest
     assert _run(["git", "rev-parse", "v2.1.14"], cwd=target).stdout.strip() == original
 
 
-@pytest.mark.parametrize("fetch_command", _fetch_commands()[:2])
-def test_required_translation_fetch_stops_on_unreachable_remote(tmp_path, fetch_command):
-    _run(["git", "init"], cwd=tmp_path)
-    _run(["git", "remote", "add", "origin", str(tmp_path / "missing.git")], cwd=tmp_path)
-    result = _run(
-        [
-            "bash", "-c",
-            'set -euo pipefail; REMOTE=origin; DEFAULT_BRANCH=main; '
-            + fetch_command + '; printf "unexpected continuation"',
-        ],
-        cwd=tmp_path,
-        check=False,
-    )
-
-    assert result.returncode != 0
-    assert "unexpected continuation" not in result.stdout
+def test_required_translation_fetch_stops_on_unreachable_remote(retagged_remote, tmp_path, monkeypatch):
+    target, original, _ = retagged_remote
+    for name in ("UPSTREAM_REPO_NAME", "TARGET_BRANCH_FOR_PR", "FORK_REPO_URL"):
+        monkeypatch.delenv(name, raising=False)
+    _run(["git", "remote", "set-url", "origin", str(tmp_path / "missing.git")], cwd=target)
+    with pytest.raises(RuntimeError, match="failed"):
+        prepare_checkout(target, {"default_branch": "main"})
+    assert _run(["git", "rev-parse", "HEAD"], cwd=target).stdout.strip() == original
+    assert _run(["git", "status", "--porcelain"], cwd=target).stdout == ""

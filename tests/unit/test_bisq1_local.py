@@ -96,6 +96,18 @@ def test_unknown_locale_fails_before_running(tmp_path):
         job.write_config(tmp_path / "bisq", tmp_path, ["pt_BR"])
 
 
+def test_legacy_wrapper_delegates_checkout_preparation_and_recovery(tmp_path, monkeypatch):
+    from localize import workflow
+
+    monkeypatch.setattr(job, "prepare_checkout", lambda *_: pytest.fail("Legacy checkout preparation ran"))
+    calls = []
+    monkeypatch.setattr(workflow, "main", lambda argv: calls.append(argv) or 0)
+    job.run(SimpleNamespace(locales=["de"], base_ref=job.INITIAL_BASE, check=True, resume_memory=None), tmp_path)
+    assert len(calls) == 1
+    assert "--no-fetch" not in calls[0]
+    assert calls[0][calls[0].index("--repo") + 1] == str(tmp_path / "bisq")
+
+
 def test_payment_brand_acceptances_are_exact_for_each_configured_locale():
     from localize.source_identical_acceptance import is_accepted_source_identical
 

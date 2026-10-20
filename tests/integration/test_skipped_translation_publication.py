@@ -1,99 +1,119 @@
-"""Exercise the shell publisher against imported, explicitly skipped files."""
+"""Imported files that fail validation withhold the entire shared workflow."""
 
 import json
 import os
 from pathlib import Path
-from shlex import quote
 import subprocess
 import sys
 
 import pytest
-
-from tests.integration.test_update_translations_batches import _run
+import yaml
 
 
 ROOT = Path(__file__).resolve().parents[2]
 
 
-@pytest.mark.parametrize("dry_run,valid_file,new_file", [(False, True, False), (False, False, False), (True, True, False), (False, True, True)])
-def test_skipped_import_never_reaches_publication(tmp_path, dry_run, valid_file, new_file):
-    """Keep the imported English regression out of commits and preserve evidence."""
+def git(repo, *args):
+    return subprocess.check_output(["git", "-C", str(repo), *args], text=True).strip()
+
+
+@pytest.mark.parametrize("check,valid_file,new_file", [
+    (False, True, False), (False, False, False),
+    (True, True, False), (False, True, True),
+])
+def test_skipped_import_never_reaches_publication(tmp_path, check, valid_file, new_file):
+    """Retain failed import evidence and publish no successful subset."""
     repo = tmp_path / "target"
-    repo.mkdir()
     folder = repo / "l10n"
-    folder.mkdir()
-    logs = tmp_path / "logs"
-    logs.mkdir()
-    (tmp_path / "localize").symlink_to(ROOT / "localize", target_is_directory=True)
+    folder.mkdir(parents=True)
+    source = "label=Options\nhelp=Choose options\nunrelated=Value\n"
+    (folder / "settings.properties").write_text(source)
+    (folder / "new.properties").write_text(source)
     skipped = folder / "settings_pt_PT.properties"
     valid = folder / "settings_ta.properties"
     original = "label=Opções\nhelp=Escolha as opções\nunrelated=Valor\n"
     imported = "label=Options\nhelp=Choose options\nunrelated=Valor\x7f\n"
+    valid_original = "label=முன்பு\nhelp=முந்தைய தேர்வுகள்\nunrelated=மதிப்பு\n"
     skipped.write_text(original)
-    valid.write_text("label=Original\n")
-    _run(["git", "init", "-q"], cwd=repo)
-    for key, value in [("user.name", "Test"), ("user.email", "test@example.invalid"), ("commit.gpgSign", "false")]:
-        _run(["git", "config", key, value], cwd=repo)
-    _run(["git", "add", "."], cwd=repo)
-    _run(["git", "commit", "-qm", "Original"], cwd=repo)
+    valid.write_text(valid_original)
+    git(repo, "init", "-b", "main")
+    git(repo, "config", "user.name", "Import test")
+    git(repo, "config", "user.email", "test@example.invalid")
+    git(repo, "add", ".")
+    git(repo, "-c", "commit.gpgsign=false", "commit", "-m", "Original")
+    base = git(repo, "rev-parse", "HEAD")
+    state = tmp_path / "state"
+    state.mkdir()
+    baseline = state / "source-baseline.txt"
+    baseline.write_text(base + "\n")
     if new_file:
         skipped = folder / "new_pt_PT.properties"
-    skipped.write_text(imported)
-    if valid_file:
-        valid.write_text("label=மொழிபெயர்ப்பு\n")
-    (logs / "translation_validation_summary.json").write_text(json.dumps({
-        "files": {"settings_ta.properties": {}} if valid_file else {},
-        "skipped_files": [skipped.name],
-        "pipeline_warnings": [{"file": skipped.name, "errors": ["U+007F"]}],
+    config = tmp_path / "config.yaml"
+    (tmp_path / "glossary.json").write_text("{}")
+    config.write_text(yaml.safe_dump({
+        "target_project_root": str(repo), "input_folder": "l10n",
+        "workflow": {"default_branch": "main"},
+        "translation_source": "transifex", "process_all_files": True,
+        "glossary_file_path": str(tmp_path / "glossary.json"),
+        "model_name": "gpt-4o-mini", "review_model_name": "gpt-4o-mini",
+        "semantic_review": {"enabled": True, "model": "gpt-4o-mini"},
+        "supported_locales": [
+            {"code": "pt_PT", "name": "Portuguese"}, {"code": "ta", "name": "Tamil"},
+        ],
     }))
-    script = (ROOT / "update-translations.sh").read_text()
-    collector = script[script.index("collect_changed_translation_files() {"):script.index("# Send a heartbeat")]
-    publish = script[script.index("publish_translation_changes() {"):script.index("# Go back to original branch")]
-    harness = rf"""
-set -euo pipefail
-mapfile() {{
-  shift
-  local array_name="$1" line
-  eval "$array_name=()"
-  while IFS= read -r line; do eval "$array_name+=(\"\$line\")"; done
-}}
-log() {{ printf '%s\n' "$1"; }}
-record_pipeline_event() {{ :; }}
-command_exists() {{ command -v "$1" >/dev/null; }}
-translation_file_extension_regex() {{ printf properties; }}
-update_git_source_baseline_if_safe() {{ touch {quote(str(tmp_path / 'baseline-advanced'))}; }}
-stage_and_submit_batch() {{
-  printf '%s\n' "${{BATCH_FILES[@]}}" > {quote(str(tmp_path / 'reviewed-files'))}
-  git add -- "${{BATCH_FILES[@]}}"
-  git -c commit.gpgSign=false commit -qm Translations
-}}
-{collector}
-APP_ROOT={quote(str(tmp_path))}
-TARGET_PROJECT_ROOT={quote(str(repo))}
-ABSOLUTE_INPUT_FOLDER={quote(str(folder))}
-INPUT_FOLDER=l10n
-DRY_RUN={str(dry_run).lower()}
-MAX_FILES_PER_PR=90
-TRANSLATION_BRANCH_PREFIX=translation-updates
-FORK_REPO_NAME=owner/repo
-TRANSLATION_SOURCE=transifex
-git remote add origin git@github.com:owner/repo.git
-{publish}
-touch {quote(str(tmp_path / 'heartbeat'))}
-"""
-    env = dict(os.environ, PATH=f"{Path(sys.executable).parent}:{os.environ['PATH']}")
-    env.pop("PYTHONPATH", None)
-    result = subprocess.run(["bash", "-c", harness], cwd=repo, env=env, text=True, capture_output=True)
-    assert result.returncode != 0, result.stdout + result.stderr
-    assert not (tmp_path / "baseline-advanced").exists()
-    assert not (tmp_path / "heartbeat").exists()
-    reviewed = tmp_path / "reviewed-files"
-    if valid_file and not dry_run:
-        assert reviewed.read_text().splitlines() == ["l10n/settings_ta.properties"]
-        assert _run(["git", "show", "HEAD:l10n/settings_pt_PT.properties"], cwd=repo).stdout == original
-    else:
-        assert not reviewed.exists()
-    evidence = list(logs.glob("skipped-inputs-*/" + skipped.name))
-    assert len(evidence) == 1
-    assert evidence[0].read_text() == imported
+    fixture = tmp_path / "import.json"
+    fixture.write_text(json.dumps({
+        "skipped": str(skipped), "imported": imported,
+        "valid": str(valid), "valid_file": valid_file,
+    }))
+    harness = r'''
+import json
+from pathlib import Path
+import sys
+from localize import workflow
+
+data = json.loads(Path(sys.argv[1]).read_text())
+marker = Path(sys.argv[2])
+def import_translations(config, repo):
+    Path(data["skipped"]).write_text(data["imported"])
+    if data["valid_file"]:
+        Path(data["valid"]).write_text("label=விருப்பங்கள்\nhelp=விருப்பங்களைத் தேர்வுசெய்க\nunrelated=மதிப்பு\n")
+def forbidden_publication(*args):
+    marker.write_text("attempted")
+    raise AssertionError("A skipped file must withhold the entire publication")
+workflow.pull_source = import_translations
+workflow.prepare_publication = lambda *args: None
+workflow.publish_receipt = forbidden_publication
+workflow.heartbeat = lambda: marker.write_text("heartbeat")
+raise SystemExit(workflow.main(sys.argv[3:]))
+'''
+    marker = tmp_path / "published-or-heartbeat"
+    env = dict(os.environ, OPENAI_API_KEY="test-only", OPENAI_BASE_URL="http://127.0.0.1:1")
+    for name in ("TRANSLATION_DIFF_BASE", "LOCALIZE_DRY_RUN", "TRANSLATION_FILTER_GLOB"):
+        env.pop(name, None)
+    result = subprocess.run(
+        [sys.executable, "-c", harness, str(fixture), str(marker),
+         "--config", str(config), "--repo", str(repo), "--state-dir", str(state),
+         "--no-fetch", *(["--check", "--no-publish"] if check else ["--publish"])],
+        cwd=ROOT, env=env, text=True, capture_output=True, timeout=30,
+    )
+    assert result.returncode == (0 if check else 1), result.stdout + result.stderr
+    assert not marker.exists()
+    assert baseline.read_text().strip() == base
+    assert git(repo, "rev-parse", "HEAD") == base
+    assert git(repo, "diff", "--cached", "--name-only") == ""
+    assert not (state / "ledger.json").exists()
+    assert not (state / "memory.json").exists()
+    if check:
+        assert skipped.read_text() == original
+        assert valid.read_text() == valid_original
+        return
+    report = Path((state / "latest-run.txt").read_text().strip())
+    assert (report / "originals" / skipped.name).read_text() == imported
     assert skipped.read_text() == imported
+    receipt = json.loads((report / "receipt.json").read_text())
+    assert receipt["status"] == "failed"
+    assert skipped.name in receipt["error"]
+    assert "U+007F" in receipt["error"]
+    usage = json.loads((report / "logs/token_usage_summary.json").read_text())
+    assert usage["totals"]["calls"] == 0

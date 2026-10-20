@@ -331,6 +331,14 @@ if [ "$(id -u)" -ne 0 ]; then
         log "Git user configured without a GPG signing key; commit signing disabled."
     fi
 
+    # Repository preparation belongs to the shared workflow. It preserves
+    # pending patches and local commits instead of resetting them at startup.
+    case "${1:-}" in
+      /app/update-translations.sh|*/run-local-translation.sh|update-translations.sh)
+        exec "$@"
+        ;;
+    esac
+
     # --- Repository Initialization/Update ---
     if [ -d "$TARGET_REPO_DIR/.git" ]; then
         if [ ! -w "$TARGET_REPO_DIR" ]; then

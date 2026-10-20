@@ -176,13 +176,8 @@ def test_run_local_translation_delegates_config_validation_to_python():
     script = (REPO_ROOT / "run-local-translation.sh").read_text(encoding="utf-8")
 
     assert 'CALLER_CWD=$(pwd)' in script
-    assert "resolve_to_absolute()" in script
-    assert 'CONFIG_FILE_PATH=$(resolve_to_absolute "$1")' in script
-    assert 'CONFIG_FILE_PATH=$(resolve_to_absolute "$TRANSLATOR_CONFIG_FILE")' in script
-    assert 'if [ -n "${1:-}" ]; then' in script
-    assert '"$VENV_PYTHON" -m localize.cli check --config "$CONFIG_FILE_PATH"' in script
+    assert 'exec "$LOCALIZE_PYTHON" -m localize.workflow "$@"' in script
     assert "yaml_get()" not in script
-    assert "TRANSLATOR_CONFIG_FILE" in script
     assert "./setup.sh" not in script
 
 

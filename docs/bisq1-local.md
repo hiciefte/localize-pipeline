@@ -2,7 +2,22 @@
 
 This job runs on your Mac, using the existing pipeline's translation, holistic
 review, semantic review, and quality gate. It leaves a local patch for review.
-It does not schedule jobs, commit, push, open a PR, or upload to Transifex.
+The shared runner leaves a reviewed patch by default. Add `--publish` to create signed
+translation PRs, or `--publish-run <report-directory>` to publish an accepted run
+without translating it again. It does not schedule jobs or upload to Transifex.
+
+Use the same entry point as every other profile:
+
+```bash
+./run-local-translation.sh --profile bisq1 --check
+./run-local-translation.sh --profile bisq1 --locales de
+```
+
+For an existing installation, pass its exact `--repo` and `--state-dir` so its
+accepted outputs and request counter remain in use. The old `scripts/run-bisq1-local.sh`
+command is a compatibility adapter using the shared workflow; its existing
+`--work-dir` layout remains supported. The following setup examples describe that
+legacy layout. New installs use the profile-neutral command above.
 
 ## Setup
 
@@ -14,7 +29,7 @@ pipeline virtual environment. It does not install or change dependencies.
 ./scripts/run-bisq1-local.sh --check
 ```
 
-This fetches public `bisq-network/bisq` `master` into a separate sparse
+This fetches public `bisq-network/bisq` `master` into a separate
 checkout under `.agent-artifacts/bisq1-local/bisq`. It inspects all 15 locales
 and writes a dated `runs/<timestamp>/plan.json` without model calls or translation edits.
 Keep `.agent-artifacts/` locally ignored, or pass `--work-dir` pointing outside
@@ -85,7 +100,7 @@ bulk retranslated.
 Each invocation preserves its reports under `runs/<timestamp>/`:
 
 - `plan.json`: upstream revision and candidate counts.
-- `quality.md` and `quality.json`: the publication quality gate.
+- `translation_quality_report.md` and `translation_quality_report.json`: the publication quality gate.
 - `translations.patch`: the staged translation diff.
 - `logs/`: validation, semantic review, and usage/cost reports.
 

@@ -55,8 +55,10 @@ from pathlib import Path
 spec = importlib.util.spec_from_file_location("job", sys.argv[1])
 job = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(job)
-job.prepare_checkout = lambda repo: None
-original_run = job.asyncio.run
+from localize import workflow
+workflow.prepare_checkout = lambda repo, *a, **kw: (job.git(repo, "rev-parse", "HEAD"), "master")
+import asyncio
+original_run = asyncio.run
 observed = []
 def observe_run(coro):
     from localize import translate_localization_files as runtime
@@ -73,7 +75,7 @@ def observe_run(coro):
         return await original_process(*args, **kwargs)
     runtime.process_translation_queue = observe_queue
     return original_run(coro)
-job.asyncio.run = observe_run
+asyncio.run = observe_run
 if sys.argv[4] == "reject":
     import localize.translation_quality_gate
     localize.translation_quality_gate.main = lambda args: 1
@@ -100,7 +102,7 @@ raise SystemExit(job.main())
     assert result.returncode == int(reject_quality), result.stdout + result.stderr
     report_dir = Path((state / "latest-run.txt").read_text().strip())
     if not reject_quality:
-        assert json.loads((report_dir / "quality.json").read_text())["blocking"] is False
+        assert json.loads((report_dir / "translation_quality_report.json").read_text())["blocking"] is False
     assert (report_dir / "translations.patch").read_bytes() == b""
     assert (state / "ledger.json").is_file() is not reject_quality
     assert (state / "memory.json").is_file() is not reject_quality
@@ -160,8 +162,10 @@ from unittest.mock import AsyncMock
 spec = importlib.util.spec_from_file_location("job", sys.argv[1])
 job = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(job)
-job.prepare_checkout = lambda repo: None
-original_run = job.asyncio.run
+from localize import workflow
+workflow.prepare_checkout = lambda repo, *a, **kw: (job.git(repo, "rev-parse", "HEAD"), "master")
+import asyncio
+original_run = asyncio.run
 state, base, reject = sys.argv[2:5]
 def mocked_run(coro):
     from localize import translate_localization_files as runtime
@@ -169,7 +173,7 @@ def mocked_run(coro):
     import localize.translation_semantic_reviewer as reviewer
     reviewer.review_translation_changes = AsyncMock(return_value=[])
     return original_run(coro)
-job.asyncio.run = mocked_run
+asyncio.run = mocked_run
 import localize.translation_semantic_reviewer as reviewer
 def semantic(args):
     target = Path(state) / "bisq" / job.RESOURCE_PATH / "displayStrings_de.properties"

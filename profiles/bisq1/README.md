@@ -4,7 +4,10 @@ This profile translates the original Bisq desktop application. Its source is
 `displayStrings.properties` under `core/src/main/resources/i18n`; targets use
 `displayStrings_<locale>.properties`. The manual runner supports any subset of
 its 15 configured locales and advances accepted local state only after the
-complete quality gate. It leaves a staged patch; it does not publish changes.
+complete quality gate. Use `./run-local-translation.sh --profile bisq1`; local
+runs leave a staged patch by default. `--publish` enables signed PR publication
+after the same checks. See `docs/how-to-run-locally.md` for the shared local/server
+workflow and reuse of existing state.
 
 Semantic QA reports findings without automatically applying suggested
 replacements. Error findings still block acceptance. Review the saved candidate

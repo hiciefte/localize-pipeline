@@ -12,11 +12,20 @@ For most repositories, start with the GitHub Action instead:
 The server deployment is Docker Compose plus cron:
 
 1. The host runs `docker compose run -T --rm translator` on a schedule.
-2. The container prepares the target repository in `/target_repo`.
-3. `update-translations.sh` prepares the configured translation source
-   (`git` or `transifex`).
-4. The container runs `python -m localize.cli run --config /app/config.yaml`.
-5. If translations changed, the script commits, signs, pushes, and opens a PR.
+2. The container installs runtime credentials and drops privileges.
+3. `update-translations.sh` calls `localize.workflow`, the same implementation
+   used by `run-local-translation.sh`.
+4. The workflow prepares the clean target checkout and configured source
+   (`git` or `transifex`), runs a bounded sample, translates, and performs holistic
+   review, final semantic review and the deterministic quality gate.
+5. Only a successful candidate may be signed, pushed and opened as a PR.
+
+The server wrapper enables publishing by default; `--no-publish` leaves a
+checked candidate for review. The local wrapper requires `--publish` or
+`--publish-run`. Both paths preserve accepted outputs and persistent request
+budgets; failed checks do not promote a run's ledger or memory. Checkout
+preparation refuses dirty files and unmerged local commits instead of resetting
+them. An existing pending translation PR continues to block scheduled work.
 
 There is no supported `translator.service` systemd unit in this repository.
 
@@ -25,7 +34,7 @@ There is no supported `translator.service` systemd unit in this repository.
 - Linux server with Docker Engine and the Docker Compose plugin.
 - Git.
 - Dedicated GitHub bot account or deploy key flow.
-- GPG key for signing commits if signed commits are required.
+- Working Git commit signing for publication; signing failure stops the run.
 - Model-provider credentials, unless using a keyless local endpoint.
 - Transifex token if `translation_source: transifex`.
 
@@ -87,10 +96,12 @@ localization_formats:
 The included `profiles/bisq/` directory is a full production example with style
 rules, semantic QA rules, and a project glossary.
 
-Translation memory is enabled by default and stored under
-`logs/translation_memory.json`. Keep that default for isolated deployments, or
-set `translation_memory_file_path` to a shared persistent path when multiple
-profiles should reuse approved translations.
+Translation memory is enabled by default. Keep the configured ledger, memory
+and request-budget database on persistent storage, normally under `/app/logs`
+for a server installation. Explicit operator state paths remain authoritative.
+Run reports and working ledger/memory copies are isolated per attempt; the
+persistent request counter is never rolled back after a failure. Do not replace
+these files when rebuilding the image or changing a profile.
 
 ## 3. Configure Secrets
 
@@ -168,14 +179,19 @@ docker compose --env-file docker/.env -f docker/docker-compose.yml run -T --rm t
 Use `-T` for SSH/cron contexts so Docker Compose does not consume stdin from the
 parent shell.
 
-Expected no-op output includes:
+Inspect the run report for a successful no-change result or a checked candidate.
+If translations changed and all checks passed, expect signed branches and PRs
+in the configured repositories. Final-check failures retain evidence and block
+publication; do not treat a translation-engine success alone as a completed run.
 
-```text
-Transifex pull completed successfully, but no translation files were modified.
-No further processing needed. Exiting gracefully.
+To generate a candidate without publishing:
+
+```bash
+docker compose --env-file docker/.env -f docker/docker-compose.yml run -T --rm translator /app/update-translations.sh --no-publish
 ```
 
-If translations changed, expect a branch and PR in the configured upstream repo.
+For a provider-free preflight, pass `--check`. This skips Transifex pulls and
+model calls; it may fetch Git unless `--no-fetch` is also supplied.
 
 ## 7. Schedule Cron
 

@@ -3,7 +3,6 @@
 import json
 import os
 from pathlib import Path
-from shlex import quote
 import subprocess
 import sys
 
@@ -113,57 +112,69 @@ def test_unconfigured_source_change_does_not_trigger_a_new_heuristic_audit(tmp_p
 
 
 @pytest.mark.parametrize("blocking", [False, True])
-def test_no_change_shell_path_retains_baseline_after_source_policy_failure(tmp_path, blocking):
+def test_no_change_workflow_retains_baseline_after_source_policy_failure(tmp_path, blocking):
     repo, folder, _, _, config, base = _case(tmp_path, CASES[0])
+    raw = yaml.safe_load(config.read_text())
     if not blocking:
-        raw = yaml.safe_load(config.read_text())
         raw["semantic_quality_rules"][0]["required_target_regex"] = "Jeder"
-        config.write_text(yaml.safe_dump(raw))
-    logs = tmp_path / "logs"
-    logs.mkdir()
-    (tmp_path / "localize").symlink_to(ROOT / "localize", target_is_directory=True)
-    (logs / "translation_validation_summary.json").write_text('{"skipped_files": []}')
-    script = (ROOT / "update-translations.sh").read_text()
-    baseline = script[script.index("sanitize_state_component() {"):script.index("translation_file_change_regex() {")]
-    collector = script[script.index("collect_changed_translation_files() {"):script.index("# Send a heartbeat")]
-    publish = script[script.index("publish_translation_changes() {"):script.index("# Go back to original branch")]
-    harness = f"""
-set -eo pipefail
-mapfile() {{
-  shift
-  local array_name="$1" line
-  eval "$array_name=()"
-  while IFS= read -r line; do eval "$array_name+=(\\\"\\$line\\\")"; done
-}}
-log() {{ :; }}
-record_pipeline_event() {{ :; }}
-translation_file_extension_regex() {{ printf properties; }}
-{baseline}
-{collector}
-APP_ROOT={quote(str(tmp_path))}
-TARGET_PROJECT_ROOT={quote(str(repo))}
-ABSOLUTE_INPUT_FOLDER={quote(str(folder))}
-CONFIG_FILE={quote(str(config))}
-INPUT_FOLDER=l10n
-LOCALIZE_STATE_DIR={quote(str(tmp_path / 'state'))}
-LOG_DIR={quote(str(logs))}
-UPSTREAM_REPO_NAME=example/project
-DEFAULT_BRANCH=main
-TRANSLATION_SOURCE=git
-mkdir -p "$LOCALIZE_STATE_DIR"
-printf '%s\\n' {quote(base)} > "$(git_source_baseline_path "$LOCALIZE_STATE_DIR")"
-prepare_git_source_diff_base git
-{publish}
-"""
-    env = dict(os.environ, PATH=f"{Path(sys.executable).parent}:{os.environ['PATH']}")
-    env.pop("TRANSLATION_DIFF_BASE", None)
-    result = _run(["bash", "-c", harness], repo, env=env, check=False)
+    raw.update({
+        "target_project_root": str(repo), "input_folder": "l10n",
+        "translation_source": "git", "process_all_files": True,
+        "model_name": "gpt-4o-mini", "review_model_name": "gpt-4o-mini",
+        "semantic_review": {"enabled": True, "model": "gpt-4o-mini"},
+        "glossary_file_path": str(tmp_path / "glossary.json"),
+    })
+    (tmp_path / "glossary.json").write_text("{}")
+    config.write_text(yaml.safe_dump(raw))
+    state = tmp_path / "state"
+    state.mkdir()
+    baseline = state / "source-baseline.txt"
+    baseline.write_text(base + "\n")
+    # Simulate an engine that leaves targets unchanged, while the workflow and
+    # final source-aware quality gate are real. No model call can conceal a
+    # policy failure by repairing the fixture before the audit sees it.
+    harness = r'''
+import json
+from pathlib import Path
+import sys
+from types import SimpleNamespace
+from localize import workflow
+
+def unchanged_engine(config_path, report, selected):
+    from localize import translate_localization_files as runtime
+    from localize.properties_parser import parse_properties_file
+    ledger = {}
+    for filename in selected:
+        source = runtime.get_source_filename(filename, list(runtime.LANGUAGE_CODES))
+        ledger[filename] = runtime.build_file_key_ledger(
+            parse_properties_file(str(Path(runtime.INPUT_FOLDER) / source))[1],
+            parse_properties_file(str(Path(runtime.INPUT_FOLDER) / filename))[1],
+        )
+    runtime.save_translation_key_ledger(str(report / "ledger.json"), ledger)
+    logs = report / "logs"
+    logs.mkdir(exist_ok=True)
+    (logs / "translation_validation_summary.json").write_text(json.dumps({
+        "files": {}, "skipped_files": [], "pipeline_warnings": [],
+    }))
+    return SimpleNamespace(skipped_files=[], processed_files_count=0)
+workflow.run_engine = unchanged_engine
+raise SystemExit(workflow.main(sys.argv[1:]))
+'''
+    env = dict(os.environ, OPENAI_API_KEY="test-only", OPENAI_BASE_URL="http://127.0.0.1:1")
+    for name in ("TRANSLATION_DIFF_BASE", "LOCALIZE_DRY_RUN", "TRANSLATION_FILTER_GLOB"):
+        env.pop(name, None)
+    result = _run([
+        sys.executable, "-c", harness, "--config", str(config), "--repo", str(repo),
+        "--state-dir", str(state), "--no-fetch", "--no-publish",
+    ], ROOT, env=env, check=False)
     assert result.returncode == (1 if blocking else 0), result.stdout + result.stderr
     expected_base = base if blocking else _run(["git", "rev-parse", "HEAD"], repo).stdout.strip()
-    assert next((tmp_path / "state").glob("*.sha")).read_text().strip() == expected_base
-    report = logs / "translation_quality_report-source-changes.json"
+    assert baseline.read_text().strip() == expected_base
+    report_dir = Path((state / "latest-run.txt").read_text().strip())
+    report = report_dir / "translation_quality_report.json"
     assert report.exists(), result.stderr
     assert json.loads(report.read_text())["semantic_qa"]["errors_count"] == int(blocking)
+    assert _run(["git", "status", "--porcelain"], repo).stdout == ""
 
 
 @pytest.mark.parametrize("zero_base", [False, True])

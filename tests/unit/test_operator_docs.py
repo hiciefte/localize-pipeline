@@ -1,4 +1,4 @@
-"""Keep operator documentation aligned with the deployed shell and Compose paths."""
+"""Keep operator documentation aligned with workflow and Compose interfaces."""
 
 from __future__ import annotations
 
@@ -28,22 +28,18 @@ def _markdown_section(document: str, heading: str) -> str:
 
 
 def test_environment_reference_tracks_the_runtime_pr_batch_default():
-    """Keep the documented PR batch default equal to the shell default."""
-    script = _read("update-translations.sh")
-    reference = _read("docs/environment-variables.md")
+    """Keep the documented PR batch default equal to the shared publisher."""
+    from localize.workflow_publication import DEFAULT_MAX_FILES_PER_PR
 
-    runtime_match = re.search(
-        r"^DEFAULT_MAX_FILES_PER_PR=(\d+)$", script, flags=re.MULTILINE
-    )
+    reference = _read("docs/environment-variables.md")
     reference_match = re.search(
         r"^\| `MAX_FILES_PER_PR` \|.*?defaults to `(\d+)`\. \|$",
         reference,
         flags=re.MULTILINE,
     )
 
-    assert runtime_match is not None
     assert reference_match is not None
-    assert reference_match.group(1) == runtime_match.group(1)
+    assert int(reference_match.group(1)) == DEFAULT_MAX_FILES_PER_PR
 
 
 def test_server_guide_describes_compose_keys_as_runtime_secrets():
