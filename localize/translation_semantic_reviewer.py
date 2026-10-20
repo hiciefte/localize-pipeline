@@ -23,6 +23,7 @@ from localize.json_response import (
     chat_reasoning_effort_kwargs,
     loads_json_object,
 )
+from localize.run_safeguards import RequestBudgetExceeded, RunSafeguards, load_safeguards
 from localize.model_provider import (
     ChatModelProvider,
     DEFAULT_MODEL_PROVIDER,
@@ -380,6 +381,8 @@ async def review_translation_changes(
                     reasoning_effort=reasoning_effort,
                 )
             )
+        except RequestBudgetExceeded:
+            raise
         except Exception as exc:
             logging.getLogger(__name__).warning(
                 "Semantic review batch failed; continuing without findings for this batch: %s",
@@ -406,6 +409,18 @@ async def _review_translation_change_batch(
         style_rules=style_rules,
         brand_glossary=brand_glossary,
     )
+    safeguards = getattr(provider, "safeguards", None)
+    if not isinstance(safeguards, RunSafeguards):
+        safeguards = None
+    checkpoint = None
+    if safeguards:
+        checkpoint = safeguards.fingerprint({
+            "stage": "semantic", "model": model, "messages": messages,
+            "reasoning_effort": reasoning_effort,
+        })
+        accepted = safeguards.lookup(checkpoint)
+        if accepted is not None:
+            return accepted
     response = await provider.create_chat_completion(
         model=model,
         messages=[
@@ -426,7 +441,11 @@ async def _review_translation_change_batch(
             "Semantic review response was truncated before validation."
         )
     response_text = response.choices[0].message.content or ""
-    return normalize_review_response(response_text, changes)
+    findings = normalize_review_response(response_text, changes)
+    # Failed/flagged judgements must be reconsidered after a correction.
+    if safeguards and not findings:
+        safeguards.accept(checkpoint, findings)
+    return findings
 
 
 def _load_config(config_path: str) -> Dict[str, Any]:
@@ -535,6 +554,7 @@ async def _run(argv: Optional[Sequence[str]]) -> int:
     api_base_url = os.environ.get("OPENAI_BASE_URL") or config.get("api_base_url")
     aisuite_config = config.get("aisuite", {}) or {}
     try:
+        safeguards = load_safeguards(config, args.config)
         provider = create_model_provider(
             provider_name=provider_name,
             api_key=os.environ.get("OPENAI_API_KEY"),
@@ -542,6 +562,7 @@ async def _run(argv: Optional[Sequence[str]]) -> int:
             logger=logger,
             aisuite_provider_configs=aisuite_config.get("provider_configs", {}) or {},
             model_names=(model,),
+            **({"safeguards": safeguards} if safeguards else {}),
         )
     except ModelProviderConfigurationError as exc:
         logger.error("Semantic review model provider configuration failed: %s", exc)
