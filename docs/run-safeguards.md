@@ -47,6 +47,37 @@ review before the runner can prepare that checkout again.
 | Bisq 2 | 2,000 |
 | Bisq Mobile | 750 |
 
+## Basis for the initial limits
+
+These are initial operational ceilings, not measured percentiles of healthy
+runs. The retained history checked on 2026-10-20 is too sparse and contains
+too many failed or recovery runs to establish that baseline.
+
+- Bisq 2: the final October 16 recovery recorded 1,670 calls including semantic
+  review. A 2,000-request ceiling leaves 330 requests, or 270 after allowing the
+  entire 60-request sample budget. Older retained translation/holistic totals
+  range from 3 to 1,178 calls, but their quality reports were blocking and those
+  totals exclude semantic review. They do not establish normal successful usage.
+- Mobile: October 13-15 each recorded 344 translation/holistic calls; these were
+  failed repeated runs. October 16's scheduled attempt recorded 540 calls
+  (542 requests in the corresponding account usage hour). The 750 ceiling
+  accommodates that observed workload and a sample, but is not a healthy-run
+  statistic. The successful October 20 recovery used 13 calls for a small
+  remaining workload, so it is not a full-workload baseline either.
+- Bisq 1 has no production history. Its 1,000 ceiling intentionally bounds the
+  initial manual run. The inspected backlog had 2,400 candidate keys across 15
+  locales, so completing it may require multiple rolling budget windows.
+
+The three-file, five-key sample is an engineering smoke test. With one draft
+per key, one holistic pass and one semantic batch per file, it normally needs
+about 21 requests before retries; 60 permits some retries while bounding a bad
+fix. Neither sample size nor retry allowance is statistically calibrated.
+
+Compare future complete runs separately from failures, recovery runs and
+no-work/pending-PR exits. Include all stages, retries and sample overhead when
+revisiting limits. Retain the SQLite counter across restarts. Request counts
+are not interchangeable with cost when model choice or message length changes.
+
 Every outbound chat-completion attempt reserves a request atomically before
 sending. Drafts, holistic/semantic review, application retries and token-parameter
 fallbacks share the limit. SDK retries are disabled for guarded OpenAI routes.
