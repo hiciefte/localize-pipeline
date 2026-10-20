@@ -78,6 +78,7 @@ def write_config(repo, state, locales, report_dir=None):
         "logging": {"log_level": "INFO", "log_to_console": True,
                     "log_file_path": str(report_dir / "logs/translation.log")},
     })
+    config["run_safeguards"]["state_path"] = str(state / "run_safeguards.sqlite3")
     path = report_dir / "config.yaml"
     path.write_text(yaml.safe_dump(config, sort_keys=False, allow_unicode=True))
     return path
@@ -171,6 +172,17 @@ def run(args, state):
     if set(changed) - allowed:
         raise RuntimeError("Unexpected files changed; inspect the workspace.")
     if changed:
+        git(repo, "add", "--", *changed)
+        from localize.translation_semantic_reviewer import main as semantic_review
+        if semantic_review([
+            "--repo-root", str(repo), "--input-folder", RESOURCE_PATH,
+            "--config", str(config_path),
+            "--validation-summary", str(report_dir / "logs/translation_validation_summary.json"),
+            "--token-usage-summary", str(report_dir / "logs/token_usage_summary.json"),
+            "--changed-files", *changed,
+        ]):
+            raise RuntimeError("Semantic review failed; local candidate retained for inspection.")
+        # The sidecar may apply reviewed suggestions; include them in the gate.
         git(repo, "add", "--", *changed)
     status = quality_gate([
         "--repo-root", str(repo), "--input-folder", RESOURCE_PATH,

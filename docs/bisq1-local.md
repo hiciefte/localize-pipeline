@@ -38,6 +38,12 @@ The profile uses the pipeline's existing model split: `gpt-4o-mini` for
 translation, `gpt-5.6-terra` for holistic review, and `gpt-5.4-mini` for semantic
 review. Model calls incur provider charges. Preflight is free of model calls.
 
+The [run safeguards](run-safeguards.md) first validate a small sample, retain
+accepted checkpoints across retries, and enforce a shared limit of 1,000
+provider requests per rolling 24 hours. The counter includes every review and
+retry, and survives restarts in `run_safeguards.sqlite3` beside the launcher.
+Large backlogs can require more than one budget window.
+
 Bisq 1 uses `pt-br`, `pt`, `zh-hans`, `zh-hant`, `pl`, and `th` in its filenames;
 use those exact codes with `--locales`. No new languages are introduced.
 

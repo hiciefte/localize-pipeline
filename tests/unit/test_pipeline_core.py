@@ -1,5 +1,5 @@
 import logging
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from typing import Dict, List
 
 import pytest
@@ -173,6 +173,35 @@ def pipeline_options(**overrides) -> TranslationPipelineOptions:
     }
     values.update(overrides)
     return TranslationPipelineOptions(**values)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("copy_fails", [False, True])
+async def test_deferred_state_commits_only_after_copyback(pipeline_paths, copy_fails):
+    fake = FakePipelineSteps(["app_de.properties"], (1, ["app_de.properties"], {}, 1))
+
+    def copy_back(*args):
+        fake.calls.append("copy")
+        if copy_fails:
+            raise OSError("copy failed")
+
+    steps = replace(
+        fake.as_steps(), copy_translated_files_back=copy_back,
+        commit_processed_state=lambda result: fake.calls.append("commit"),
+    )
+    if copy_fails:
+        with pytest.raises(OSError):
+            await run_translation_pipeline(
+                paths=pipeline_paths, options=pipeline_options(), steps=steps,
+                logger=logging.getLogger(__name__),
+            )
+        assert "commit" not in fake.calls
+    else:
+        await run_translation_pipeline(
+            paths=pipeline_paths, options=pipeline_options(), steps=steps,
+            logger=logging.getLogger(__name__),
+        )
+        assert fake.calls.index("copy") < fake.calls.index("commit")
 
 
 @pytest.mark.asyncio
