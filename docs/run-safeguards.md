@@ -106,3 +106,20 @@ After a stop, inspect the sample/usage reports, correct the cause, then rerun.
 For a budget stop, wait for rolling capacity or deliberately adjust the profile
 limit. Do not delete the store or silently loop full runs. Provider setup,
 state-storage failures and invalid limits fail closed.
+
+### Semantic findings and confirmation
+
+A correct translation is reported as `{"findings": []}`. A nonempty semantic
+review receives one confirmation pass against the original source and target,
+including their conditions and pronoun references. This prevents a checklist
+entry saying "no issue" from blocking a sample merely because it carries an
+error label. The confirmation may retain genuine errors or warnings; it is not
+repeated until it returns a clean result. Both candidate and confirmed findings
+are retained in the application log.
+
+Both requests use the existing provider and request budget. Invalid, truncated
+or out-of-scope responses leave the batch unvalidated and cannot authorize the
+full queue. Only a clean completed review is checkpointed, with the source,
+target, prompt, model, policy and code fingerprint. Review failures without a
+failure collector propagate to the caller instead of looking like a clean
+empty result.

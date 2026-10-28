@@ -161,4 +161,4 @@ async def test_semantic_clean_result_reused_but_flagged_result_not_cached(tmp_pa
     )
     assert await _review_translation_change_batch(**args)
     assert await _review_translation_change_batch(**args)
-    assert create.await_count == 3
+    assert create.await_count == 5  # Each flagged result is confirmed exactly once.
