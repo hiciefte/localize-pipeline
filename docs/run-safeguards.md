@@ -123,3 +123,9 @@ full queue. Only a clean completed review is checkpointed, with the source,
 target, prompt, model, policy and code fingerprint. Review failures without a
 failure collector propagate to the caller instead of looking like a clean
 empty result.
+
+Confirmation uses a separate `decisions` schema with an explicit `confirmed` or
+`rejected` verdict for every candidate id. Missing, duplicate or unknown ids,
+invalid verdicts and blank reasons fail closed; severity labels are not accepted
+as confirmation decisions. Rejected claims remain in diagnostics and are never
+removed by matching prose such as "no issue".

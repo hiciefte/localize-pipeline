@@ -155,10 +155,14 @@ async def test_semantic_clean_result_reused_but_flagged_result_not_cached(tmp_pa
     assert await _review_translation_change_batch(**args) == []
     assert create.await_count == 1
     args["style_rules"] = ["Use a different register."]
-    create.return_value.choices[0].message.content = (
+    flagged = SimpleNamespace(choices=[SimpleNamespace(message=SimpleNamespace(content=(
         '{"findings":[{"file":"app_de.properties","key":"key",'
         '"severity":"error","reason":"wrong meaning"}]}'
-    )
+    )), finish_reason="stop")])
+    confirmed = SimpleNamespace(choices=[SimpleNamespace(message=SimpleNamespace(content=(
+        '{"decisions":[{"id":"finding_0","verdict":"confirmed","reason":"wrong meaning"}]}'
+    )), finish_reason="stop")])
+    create.side_effect = [flagged, confirmed, flagged, confirmed]
     assert await _review_translation_change_batch(**args)
     assert await _review_translation_change_batch(**args)
     assert create.await_count == 5  # Each flagged result is confirmed exactly once.
