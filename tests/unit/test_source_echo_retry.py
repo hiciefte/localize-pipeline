@@ -45,6 +45,37 @@ async def test_initial_source_echo_retries_before_reporting_success(monkeypatch,
 
 
 @pytest.mark.asyncio
+async def test_source_echo_retry_uses_focused_source_without_old_context(monkeypatch):
+    """Repeated drafting cannot be anchored by the same large context excerpt."""
+    source = "Payment data for trade {0}"
+    key = "payment.title"
+    provider = MagicMock()
+    provider.count_tokens.return_value = 1
+    provider.is_retryable_error.return_value = False
+    provider.create_chat_completion = AsyncMock(side_effect=[
+        _response(source), _response("Data wey concern payment for trade {0}"),
+    ])
+    monkeypatch.setattr(pipeline, "MODEL_PROVIDER", provider)
+    monkeypatch.setattr(pipeline, "_handle_retry", AsyncMock(return_value=True))
+    monkeypatch.setattr(pipeline, "DRY_RUN", False)
+    monkeypatch.setattr(pipeline, "NAME_TO_CODE", {"nigerian pidgin": "pcm"})
+    result = await pipeline.translate_text_async(
+        source, key, {"payment.other": "Old example for context"},
+        {key: source, "payment.other": "Other payment"},
+        "Nigerian Pidgin", {"pcm": {"trade": "Trayd"}},
+        asyncio.Semaphore(1), _NoLimit(), 0,
+    )
+    first, retry = provider.create_chat_completion.await_args_list
+    assert "Old example for context" in first.kwargs["messages"][1]["content"]
+    repair = retry.kwargs["messages"][1]["content"]
+    assert "Old example for context" not in repair
+    assert "Trayd" in repair
+    assert "Payment data for trade __PH_" in repair
+    assert "natural" in repair
+    assert result == (0, "Data wey concern payment for trade {0}", True)
+
+
+@pytest.mark.asyncio
 async def test_initial_exact_source_identical_acceptance_does_not_retry(monkeypatch):
     source = "Private chat"
     provider = MagicMock()

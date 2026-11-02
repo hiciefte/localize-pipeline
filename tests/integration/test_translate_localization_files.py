@@ -412,6 +412,52 @@ async def test_failed_model_translation_marks_ledger_and_skips_memory(integratio
 
 
 @pytest.mark.asyncio
+async def test_exhausted_draft_does_not_poison_healthy_holistic_review(
+    integration_test_environment, monkeypatch,
+):
+    """One failed draft stays failed while its healthy sibling finishes review."""
+    env = integration_test_environment
+    pipeline = localize.translate_localization_files
+    source = {"payment.title": "Payment data for trade {0}", "payment.open": "Open wallet"}
+    with open(os.path.join(env["input_folder"], "app.properties"), "w") as stream:
+        stream.write("".join(f"{key}={value}\n" for key, value in source.items()))
+    with open(os.path.join(env["translation_queue_folder"], "app_de.properties"), "w") as stream:
+        stream.write("")
+    ledger_path = os.path.join(env["input_folder"], "failed-draft-ledger.json")
+    memory_path = os.path.join(env["input_folder"], "failed-draft-memory.json")
+
+    async def translate(text, key, *args, **kwargs):
+        return (args[6], text, False) if key == "payment.title" else (
+            args[6], "Wallet öffnen", True,
+        )
+
+    async def review(**kwargs):
+        assert kwargs["keys_to_review"] == ["payment.open"]
+        assert "payment.title" not in kwargs["source_content"]
+        return {"payment.open": "Wallet öffnen"}
+
+    monkeypatch.setattr(pipeline, "translate_text_async", AsyncMock(side_effect=translate))
+    monkeypatch.setattr(pipeline, "holistic_review_async", AsyncMock(side_effect=review))
+    monkeypatch.setattr(pipeline, "get_working_tree_changed_keys", lambda *a: set())
+    monkeypatch.setattr(pipeline, "TRANSLATION_KEY_LEDGER_FILE_PATH", ledger_path)
+    monkeypatch.setattr(pipeline, "TRANSLATION_MEMORY_ENABLED", True)
+    monkeypatch.setattr(pipeline, "TRANSLATION_MEMORY_FILE_PATH", memory_path)
+    summary = {}
+    await pipeline.process_translation_queue(
+        env["translation_queue_folder"], env["translated_queue_folder"],
+        env["mock_glossary_path_resolved"], validation_summary=summary,
+    )
+    pipeline.holistic_review_async.assert_awaited_once()
+    assert summary["app_de.properties"]["model_translation_failed_keys"] == ["payment.title"]
+    ledger = pipeline.load_translation_key_ledger(ledger_path)["app_de.properties"]
+    assert ledger["payment.title"]["status"] == "failed"
+    assert ledger["payment.open"].get("status") != "failed"
+    memory = load_translation_memory(memory_path)
+    assert memory.lookup(source["payment.title"], locale="de", format_id=JAVA_PROPERTIES_FORMAT.id) is None
+    assert memory.lookup(source["payment.open"], locale="de", format_id=JAVA_PROPERTIES_FORMAT.id) == "Wallet öffnen"
+
+
+@pytest.mark.asyncio
 async def test_failed_model_translation_preserves_ledger_verified_target(
     integration_test_environment,
 ):
